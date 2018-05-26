@@ -85,7 +85,7 @@ def findSong(name, artists):
         trackArtists = result['artists']
         trackArtistsNames = list(map((lambda artist: artist['name']), trackArtists))
         # take intersection of trackArtists and desiredArtists lists
-        artistsInCommon = [artist for artist in trackArtistsNames if artist in desiredArtists]
+        artistsInCommon = [artist for artist in trackArtistsNames if artist in artists]
 
         # if at least one artist matches and names are approx. equal, set songId
         if artistsInCommon and name.lower() in result['name'].lower():
@@ -101,6 +101,23 @@ def getTodaysDate():
         todaysDate = todaysDate[1:]
     return todaysDate
 
+# converts special characters to their basic form (for string comparison)
+def normalizeNames(names):
+    # check type (if single element, return as single element)
+    if type(names) == str:
+        name = names.lower().replace('ë', 'e').replace('í', 'i').replace('ñ', 'n')
+        return name
+    # make replacements
+    for i in range(len(names)):
+        names[i] = names[i].lower().replace('ë', 'e').replace('í', 'i').replace('ñ', 'n')
+    return names    
+
+# removes any trailing details from song name (i.e. "(prod. by ...)" or "feat ...")
+def getTrueSongName(songName):
+    trueSongName = songName[:songName.index(' (')] if '(' in songName else songName
+    trueSongName = trueSongName[:trueSongName.index(' feat')] if 'feat' in trueSongName else trueSongName
+    return trueSongName
+
 # builds a new playlist on my Spotify account w/ tracks corresponding to provided song ids
 def createPlaylist(songIds):
     # initialize playlist
@@ -115,6 +132,9 @@ def createPlaylist(songIds):
     
     if r.status_code in [200, 201]:
         newPlaylistId = r.json()['id']
+        # create record in db for new playlist
+        c.execute("INSERT INTO playlists_created (spotify_playlist_id, playlist_name) VALUES (?, ?)", (newPlaylistId, playlistName))
+        conn.commit()
     
     # add tracks to playlist
     addTracksToPlaylist(newPlaylistId, playlistName, songIds)
@@ -201,9 +221,10 @@ songIdsToAdd = []
 for candidate in songCandidates:
     # make sure song hasn't already been added to previous playlist
     isDuplicate = False
-    c.execute("SELECT * FROM songs_added WHERE song_name = ?", (candidate[0],))
+    c.execute("SELECT * FROM songs_added WHERE song_name LIKE ?", (candidate[0] + '%',))
     for row in c.fetchall():
-        if row[0] == candidate[0] and row[1] == candidate[1][0]:
+        trueSongName = getTrueSongName(row[0])
+        if normalizeNames(trueSongName) == normalizeNames(candidate[0]) and normalizeNames(row[1]) in normalizeNames(candidate[1]):
             isDuplicate = True
     if isDuplicate: # skip over this song if it's a duplicate
         continue
@@ -213,8 +234,15 @@ for candidate in songCandidates:
     if songId:
         songIdsToAdd.append(songId)
 
-# create and populate a new Spotify playlist
-createPlaylist(list(set(songIdsToAdd))) # make sure all songs are unique
+# determine day of week
+dayOfWeek = int(datetime.datetime.today().strftime('%u'))
+# new playlist if it's Saturday, else add to most recent playlist
+if dayOfWeek == 6:
+    createPlaylist(list(set(songIdsToAdd))) # make sure all songs are unique
+else:
+    c.execute("SELECT spotify_playlist_id, playlist_name FROM playlists_created WHERE id = MAX(SELECT id FROM playlists_created)")
+    currentPlaylist = c.fetchone()
+    addTracksToPlaylist(currentPlaylist[0], currentPlaylist[1], songIdsToAdd)
 
 # close cursor and SQLite db connection
 c.close()
