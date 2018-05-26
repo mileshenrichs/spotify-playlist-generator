@@ -2,8 +2,12 @@ import sqlite3
 import requests
 from bs4 import BeautifulSoup
 import urllib.parse
+import datetime
 
 # ====================== METHOD DEFINITIONS ========================
+
+def authHeader():
+    return {'Authorization': 'Bearer {}'.format(spotifyToken)}
 
 # builds list of song artists given string which contains one or more names
 def buildArtistsList(artistStr):
@@ -59,7 +63,6 @@ def getNewAccessToken():
     reqHeader = {'Authorization': 'Basic {}'.format(basicToken)}
     reqBody = {'grant_type': 'refresh_token', 'refresh_token': refreshToken}
     r = requests.post('https://accounts.spotify.com/api/token', headers=reqHeader, data=reqBody)
-    print('status: ' + str(r.status_code))
     resJson = r.json()
     
     newToken = resJson['access_token']
@@ -73,9 +76,8 @@ def getNewAccessToken():
 def findSong(name, artists):
     songId = ''
 
-    reqHeader = {'Authorization': 'Bearer {}'.format(spotifyToken)}
     queryParams = '?q={}&type=track&market=US&limit=5'.format(urllib.parse.quote(name))
-    r = requests.get('https://api.spotify.com/v1/search' + queryParams, headers=reqHeader)
+    r = requests.get('https://api.spotify.com/v1/search' + queryParams, headers=authHeader())
     res = r.json()
 
     # iterate through results
@@ -92,13 +94,64 @@ def findSong(name, artists):
 
     return songId
 
+# returns today's date as simple string (i.e. 10/08, 4/22)
+def getTodaysDate():
+    todaysDate = datetime.datetime.today().strftime('%m/%d')
+    if todaysDate[0] == '0':
+        todaysDate = todaysDate[1:]
+    return todaysDate
+
+# builds a new playlist on my Spotify account w/ tracks corresponding to provided song ids
+def createPlaylist(songIds):
+    # initialize playlist
+    todaysDate = getTodaysDate()
+    c.execute("SELECT value FROM tokens WHERE token_type = 'spotify_id'")
+    spotifyUserId = c.fetchone()[0]
+    playlistName = 'New Songs {}'.format(todaysDate)
+
+    reqHeader = {'Authorization': 'Bearer {}'.format(spotifyToken), 'Content-Type': 'application/json'}
+    reqBody = {'name': playlistName, 'description': 'This playlist was built by a script.  See how it works at: https://github.com/mileshenrichs/spotify-playlist-generator'}
+    r = requests.post('https://api.spotify.com/v1/users/{}/playlists'.format(spotifyUserId), headers=reqHeader, json=reqBody)
+    
+    if r.status_code in [200, 201]:
+        newPlaylistId = r.json()['id']
+    
+    # add tracks to playlist
+    addTracksToPlaylist(newPlaylistId, playlistName, songIds)
+
+# place tracks with given ids into Spotify playlist with given id and name
+def addTracksToPlaylist(playlistId, playlistName, songIds):
+    # get user id (used in request)
+    c.execute("SELECT value FROM tokens WHERE token_type = 'spotify_id'")
+    userId = c.fetchone()[0]
+
+    # first, add tracks to songs_added playlist (to prevent future duplicates)
+    for songId in songIds:
+        # get song details
+        r = requests.get('https://api.spotify.com/v1/tracks/{}'.format(songId), headers=authHeader())
+        res = r.json()
+        songName = res['name']
+        songPrimaryArtist = res['artists'][0]['name']
+        
+        # create entry in db
+        c.execute("INSERT INTO songs_added VALUES (?, ?, ?, datetime('now', 'localtime'))", (songName, songPrimaryArtist, playlistName))
+    conn.commit()
+
+    # send request to add tracks to Spotify playlist
+    reqHeader = {'Authorization': 'Bearer {}'.format(spotifyToken), 'Content-Type': 'application/json'}
+    reqBody = {'uris': list(map((lambda songId: 'spotify:track:' + songId), songIds))}
+
+    r = requests.post('https://api.spotify.com/v1/users/{}/playlists/{}/tracks'.format(userId, playlistId), 
+            headers=reqHeader, json=reqBody)
+
 
 # ====================== BEGIN SCRIPT ========================
 
 # define desired artists list
 desiredArtists = ['Future', '21 Savage', 'Travis Scott', 'Drake', 'Lil Baby', 'Lil Uzi Vert', 'Rae Sremmurd', 'Big Sean', 'Dave East', 
     'Cardi B', 'Offset', 'Young Thug', 'Swae Lee', 'The Weeknd', 'Desiigner', 'Joyner Lucas', 'Post Malone', 'Vory', 'Lil Pump', 
-    'Kevin Gates', 'Jay Critch', 'Rich The Kid', 'Quavo', 'Migos', 'Tory Lanez', 'Meek Mill', 'A$AP Rocky', 'Jazz Cartier', 'Kodak Black']
+    'Kevin Gates', 'Jay Critch', 'Rich The Kid', 'Quavo', 'Migos', 'Tory Lanez', 'Meek Mill', 'A$AP Rocky', 'Jazz Cartier', 
+    'Kodak Black', '6LACK']
 # sort list (for binary search later)
 desiredArtists.sort()
 
@@ -110,8 +163,7 @@ c = conn.cursor()
 c.execute("SELECT value FROM tokens WHERE token_type = 'access_token'")
 spotifyToken = c.fetchone()[0]
 # first, test current access token
-reqHeader = {'Authorization': 'Bearer {}'.format(spotifyToken)}
-testRequest = requests.get('https://api.spotify.com/v1/me', headers=reqHeader)
+testRequest = requests.get('https://api.spotify.com/v1/me', headers=authHeader())
 # if unauthorized, need to refresh access token
 if testRequest.status_code in [401, 403]:
     spotifyToken = getNewAccessToken()
@@ -161,7 +213,8 @@ for candidate in songCandidates:
     if songId:
         songIdsToAdd.append(songId)
 
-print(songIdsToAdd)
+# create and populate a new Spotify playlist
+createPlaylist(list(set(songIdsToAdd))) # make sure all songs are unique
 
 # close cursor and SQLite db connection
 c.close()
