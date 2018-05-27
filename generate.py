@@ -240,7 +240,7 @@ dayOfWeek = int(datetime.datetime.today().strftime('%u'))
 if dayOfWeek == 6:
     createPlaylist(list(set(songIdsToAdd))) # make sure all songs are unique
 else:
-    c.execute("SELECT spotify_playlist_id, playlist_name FROM playlists_created WHERE id = MAX(SELECT id FROM playlists_created)")
+    c.execute("SELECT spotify_playlist_id, playlist_name FROM playlists_created WHERE id = (SELECT MAX(id) FROM playlists_created)")
     currentPlaylist = c.fetchone()
     addTracksToPlaylist(currentPlaylist[0], currentPlaylist[1], songIdsToAdd)
 
