@@ -1,3 +1,7 @@
+Shoutout to __MyBridge__ for listing this project as one of the [Top 10 Python Open Source Projects of June 2018](https://medium.mybridge.co/python-open-source-of-the-month-v-june-2018-5396a661b110)!
+
+![Python Open Source](img/mybridge.png "MyBridge Open Source Rankings")
+
 # Spotify Playlist Generator
 
 Spotify Playlist Generator is a Python script that automatically builds a new Spotify playlist each week with new music.  This script was written for personal use, so the playlist creation is authorized by an access token retreived for my Spotify account.  I used [Windows Task Scheduler](https://en.wikipedia.org/wiki/Windows_Task_Scheduler) to regulate the script to run every morning at 10:00 AM on my computer.
